@@ -13,7 +13,7 @@ fn main() {
     let matches = App::from_yaml(yaml).get_matches();
 
     let input = matches.value_of("input").expect("No input value");
-    let contents = sdf::prepare_file_for_SDF(input, matches.is_present("zipped"));
+    let contents = sdf::file_to_SDF_vec(input);
     let idfield = String::from(matches.value_of("idfield").unwrap());
 
     if !matches.is_present("table") && !matches.is_present("csv") && !matches.is_present("summary") {
@@ -59,9 +59,7 @@ fn main() {
 
     if matches.is_present("csv") || matches.is_present("table") {
         let mut contents_data: Vec<BTreeMap<String, Vec<String>>> = Vec::new();
-        for block in contents {
-            let mut record = SDFRecord::new();
-            record.readRec(block);
+        for record in contents {
             contents_data.push(record.data);
         }
         let table = make_table(contents_data, !matches.is_present("no_headers"), &idfield, headings, fields);
@@ -76,11 +74,9 @@ fn main() {
 
 }
 
-fn output_list(file: Vec<Vec<String>>) {
+fn output_list(file: Vec<SDFRecord>) {
     let mut i = 1;
-    for block in file {
-        let mut record = SDFRecord::new();
-        record.readRec(block);
+    for record in file {
         writeln!(io::stdout(), "RECORD #{}", i).expect("Error writing to stdout");
         record.writeData();
         writeln!(io::stdout(), "").expect("Error writing to stdout");
@@ -124,14 +120,12 @@ fn output_csv(table: Table) {
     writeln!(io::stdout(), "{}", String::from_utf8(table.to_csv(Vec::new()).unwrap().into_inner().unwrap()).unwrap()).expect("Error writing to stdout");
 }
 
-fn output_summary(file: Vec<Vec<String>>, idfield: &str, ind_type: &str, use_headers: bool, headings: Vec<&str>, table_fields: Vec<&str>) {
+fn output_summary(file: Vec<SDFRecord>, idfield: &str, ind_type: &str, use_headers: bool, headings: Vec<&str>, table_fields: Vec<&str>) {
     // Makes a BTreeMap that stores the records from input grouped by the specified id field 
     // This is probably a problem for unreasonably large inputs (multiple GBs)
     // This could probably be parallelized, not sure how to do it safely
     let mut records_by_id: BTreeMap<String, Vec<BTreeMap<String, Vec<String>>>> = BTreeMap::new();
-    for block in file {
-        let mut record = SDFRecord::new();
-        record.readRec(block);
+    for record in file {
         let id = record.getData(idfield);
         if records_by_id.contains_key(&id) {
             records_by_id.get_mut(&id).unwrap().push(record.data);

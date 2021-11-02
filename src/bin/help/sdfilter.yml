@@ -56,8 +56,3 @@ args:
         help: Gathers results in a single file.
         required: false
         takes_value: false
-    - zipped:
-        short: z
-        long: zip
-        help: Input file is a zip container (currently only supports zips with a single file)
-        takes_value: false

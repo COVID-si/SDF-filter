@@ -1,5 +1,5 @@
 use std::{
-    io::{self, Write},
+    io::{self, prelude::*, BufWriter, BufReader},
     fs::metadata,
     process,
     time::Instant
@@ -20,7 +20,6 @@ fn main() {
     let refvalue: f64 = matches.value_of("value").unwrap().parse().expect("Value is not valid float!");
     let operand = matches.value_of("operand").unwrap();
     let filetypes: Vec<&str> = vec!["test"]; //matches.values_of("filetypes").unwrap().collect();
-    let zipped = matches.is_present("zipped");
     
     // Iterate over input files 
     let files: Vec<String>;
@@ -32,23 +31,40 @@ fn main() {
         } else { // Check if path points to a file
             files = vec![(&path).to_string()];
         }
-
         if output == "-" {
             for file in files { // Use par_iter() for easy parallelization
-                let mut matching_records: Vec<String> = Vec::new();
-                for block in sdf::prepare_file_for_SDF(&file, zipped) {
+                // Create write buffer
+                let mut writer = Box::new(BufWriter::new(io::stdout()));
+                let mut reader = BufReader::new(std::fs::File::open(&file).unwrap());
+                let mut i = 1;
+                loop {
+                    let block = match sdf::record_to_lines(&mut reader) {
+                        Some(block) => block,
+                        None => break
+                    };
+
                     let mut record: SDFRecord = SDFRecord::new();
                     record.readRec(block);
-                    let value: f64 = record.data[field][0].parse().unwrap();
+                    if record.getData("_NATOMS") == "ERR" {
+                        eprintln!("Invalid count line in {}[{}]", &file, i.to_string());
+                    }
+                    let value = match record.getData(field).parse::<f64>() {
+                        Ok(num) => Some(num),
+                        Err(_) => None
+                    };
 
                     // Get matching records
-                    if evaluate(value, refvalue, operand) {
-                        matching_records.push(record.lines.join("\n"));
+                    match evaluate(value, refvalue, operand) {
+                        Some(result) => {
+                            if result {
+                                writeln!(writer, "{}\n$$$$", record.lines.join("\n")).expect("Failed to write to buffer!");
+                                writer.flush().unwrap();
+                            }
+                        },
+                        None => ()
                     }
+                    i = i + 1;
                 }
-
-                // Write vector of extracted data to stdout
-                io::stdout().write_all((matching_records.join("\n$$$$\n")+"\n$$$$").trim().as_bytes()).expect("Error writing to stdout");
             }
         } else {
             // Draw a nice progress bar
@@ -62,25 +78,46 @@ fn main() {
             println!("Processing files...");
 
             let _iter: Vec<_> = files.par_iter().progress_with(pb).map(|file| { // Use par_iter() for easy parallelization
-                let mut matching_records: Vec<String> = Vec::new();
-                for block in sdf::prepare_file_for_SDF(&file, zipped) {
-                    let mut record: SDFRecord = SDFRecord::new();
-                    record.readRec(block);
-                    let value: f64 = record.data[field][0].parse().unwrap();
-
-                    // Get matching records
-                    if evaluate(value, refvalue, operand) {
-                        matching_records.push(record.lines.join("\n"));
-                    }
-                }
-
                 // Set output path
                 let out_path: String = match file.trim() {
                     "-" => (output.to_owned() + "/stdin.txt"),
                     _ => (output.to_owned() + "/" + (&file.split("/").collect::<Vec<&str>>()).last().unwrap()),
                 };
-                // Write vector of extracted data to file
-                sdf::write_to_file(&((matching_records.join("\n$$$$\n")+"\n$$$$").trim()), &out_path);
+
+                // Create write buffer
+                let out_file = sdf::create_file(&out_path);
+                let mut writer = Box::new(BufWriter::new(out_file));
+                
+                let mut reader = BufReader::new(std::fs::File::open(&file).unwrap());
+                let mut i = 1;
+                loop {
+                    let block = match sdf::record_to_lines(&mut reader) {
+                        Some(block) => block,
+                        None => break
+                    };
+
+                    let mut record: SDFRecord = SDFRecord::new();
+                    record.readRec(block);
+                    if record.getData("_NATOMS") == "ERR" {
+                        eprintln!("Invalid count line in {}[{}]", &file, i.to_string());
+                    }
+                    let value = match record.getData(field).parse::<f64>() {
+                        Ok(num) => Some(num),
+                        Err(_) => None
+                    };
+
+                    // Get matching records
+                    match evaluate(value, refvalue, operand) {
+                        Some(result) => {
+                            if result {
+                                writeln!(writer, "{}\n$$$$", record.lines.join("\n")).expect("Failed to write to buffer!");
+                                writer.flush().unwrap();
+                            }
+                        },
+                        None => ()
+                    }
+                    i = i + 1;
+                }
             }).collect();
 
             println!("Done in {}", HumanDuration(started.elapsed()));
@@ -92,41 +129,46 @@ fn main() {
     }
 }
 
-fn evaluate(value: f64, refvalue: f64, operand: &str) -> bool {
-    match operand {
-        "lt" => {
-            if value < refvalue {
-                return true;
-            } else {return false}
-        },
-        "le" => {
-            if value <= refvalue {
-                return true;
-            } else {return false}
-        },
-        "eq" => {
-            if value == refvalue {
-                return true;
-            } else {return false}
-        },
-        "ne" => {
-            if value != refvalue {
-                return true;
-            } else {return false}
-        },
-        "ge" => {
-            if value >= refvalue {
-                return true;
-            } else {return false}
-        },
-        "gt" => {
-            if value > refvalue {
-                return true;
-            } else {return false}
-        },
-        _ => {
-            eprintln!("Unsupported operand!");
-            return false;
+fn evaluate(value: Option<f64>, refvalue: f64, operand: &str) -> Option<bool> {
+    match value {
+        None => return None,
+        Some(value) => {
+            match operand {
+                "lt" => {
+                    if value < refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                "le" => {
+                    if value <= refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                "eq" => {
+                    if value == refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                "ne" => {
+                    if value != refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                "ge" => {
+                    if value >= refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                "gt" => {
+                    if value > refvalue {
+                        return Some(true);
+                    } else {return Some(false)}
+                },
+                _ => {
+                    eprintln!("Unsupported operand!");
+                    return Some(false);
+                }
+            }
         }
     }
 }

@@ -74,14 +74,3 @@ args:
         required: false
         takes_value: false
         display_order: 7
-    - zipped:
-        short: z
-        long: zip
-        help: Input file is a zip container (currently only supports zips with a single file)
-        takes_value: false
-    #- supplier:
-    #    short: S
-    #    long: supplier
-    #    help: "List format: output all data fields for each record"
-    #    required: false
-    #    takes_value: false

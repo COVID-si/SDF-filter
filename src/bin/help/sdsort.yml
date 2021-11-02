@@ -50,10 +50,3 @@ args:
         help: Descending sort (default is ascending sort).
         takes_value: false
         display_order: 2
-    - zipped:
-        short: z
-        long: zip
-        help: Input file is a zip container (currently only supports zips with a single file).
-        takes_value: false
-        display_order: 3
-    

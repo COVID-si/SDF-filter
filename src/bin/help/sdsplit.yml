@@ -47,8 +47,3 @@ args:
         takes_value: true
         default_value: temp
         display_order: 5
-    - zipped:
-        short: z
-        long: zip
-        help: Input file is a zip container (currently only supports zips with a single file)
-        takes_value: false

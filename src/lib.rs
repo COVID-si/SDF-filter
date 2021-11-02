@@ -1,16 +1,28 @@
 #![allow(non_snake_case)]
 
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, prelude::*, BufReader, Read, Seek, SeekFrom},
+    io::{self, prelude::*, Read, Seek, SeekFrom, BufReader},
     path::Path,
 };
+use fs_err::{self as fs, File, OpenOptions};
 use walkdir::WalkDir;
-use zip::read::ZipArchive;
 
-enum Input {
-    File(fs::File),
+pub enum Input {
+    File(File),
     Stdin(io::Stdin),
+}
+
+impl Input {
+    pub fn filename(&self) -> String {
+        let output: String;
+        match self {
+            Input::File(file) => {
+                output = file.path().file_name().expect("Cannot get file name!").to_str().unwrap().to_string()
+            },
+            Input::Stdin(_) => { output = String::from("stdin") } 
+        }
+        return output;
+    }
 }
 
 impl Read for Input {
@@ -33,6 +45,80 @@ impl Seek for Input {
                 ))
             },
         }
+    }
+}
+
+pub fn count_records<R: BufRead>(file: &mut R) -> usize {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut count = 0;
+    loop {
+        match file.read_until(b'\n', &mut buf) {
+            Ok(_) => {
+                if buf.is_empty() {
+                    break;
+                }
+                &buf.pop();
+                if buf.last() == Some(&b'\r') {
+                    &buf.pop();
+                }
+                let line = String::from_utf8_lossy(&buf);
+                if line.contains("$$$$") { count = count+1 }
+                buf.clear();
+            }
+            Err(e) => eprintln!("{}", e)
+        };
+    }
+    return count;
+}
+
+pub fn record_to_string<R: BufRead>(file: &mut R) -> Option<String> {
+    let mut output: String = String::new();
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        match file.read_until(b'\n', &mut buf) {
+            Ok(_) => {
+                if buf.is_empty() {
+                    return Option::None;
+                }
+                &buf.pop();
+                if buf.last() == Some(&b'\r') {
+                    &buf.pop();
+                }
+                let line = String::from_utf8_lossy(&buf);
+                if line.contains("$$$$") {
+                    return Option::Some(output);
+                } else {
+                    output = output + "\n" + &line.to_string();
+                }
+                buf.clear();
+            }
+            Err(e) => eprintln!("{}", e)
+        };
+    }
+}
+
+pub fn record_to_lines<R: BufRead>(file: &mut R) -> Option<Vec<String>> {
+    let mut output: Vec<String> = Vec::new();
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        match file.read_until(b'\n', &mut buf) {
+            Ok(_) => {
+                if buf.is_empty() {
+                    return Option::None;
+                }
+                &buf.pop();
+                if buf.last() == Some(&b'\r') {
+                    &buf.pop();
+                }
+                let line = String::from_utf8_lossy(&buf);
+                output.push(line.to_string());
+                if line.contains("$$$$") {
+                    return Option::Some(output);
+                }
+                buf.clear();
+            }
+            Err(e) => eprintln!("{}", e)
+        };
     }
 }
 
@@ -76,69 +162,20 @@ pub fn append_line_to_file(filename: &str, line: &str) {
     }
 }
 
-fn zip_handler(input: Input) -> Result<Vec<u8>, io::Error> {
-    let mut buf: Vec<u8> = Vec::new();
-    let mut archive = ZipArchive::new(input).unwrap();
-        if archive.len() == 1 {
-            archive.by_index(0).unwrap().read_to_end(&mut buf)?;
-            return Ok(buf);
-        } else {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Zip file contains more than one file"));
-        }
-}
+pub fn create_file(filename: &str) -> File {
+    let path = Path::new(&filename);
+    if filename.contains("/") {
+        let prefix = path.parent().unwrap();
+        fs::create_dir_all(prefix).unwrap();
+    }
+    let display = path.display();
 
-pub fn lines_from_file(filename: &str, zipped: bool) -> Vec<String> {
-    let input: Input = match filename {
-        "-" => Input::Stdin(io::stdin()),
-        _ => Input::File(fs::File::open(Path::new(filename)).expect("No such file"))
+    let file = match fs::File::create(&path) {
+        Err(why) => panic!("Couldn't create {}: {}", display, why),
+        Ok(file) => file,
     };
-    let mut buf: Vec<u8> = Vec::new();
-    let mut output: Vec<String> = Vec::new();
-    let mut reader: Box<dyn BufRead>;
-    if zipped {
-        match zip_handler(input) {
-            Ok(contents) => {
-                reader = Box::new(io::Cursor::new(contents));
-            },
-            Err(e) => return vec![e.to_string()]
-        }
-    } else {
-        reader = Box::new(BufReader::new(input));
-    }
-    while let Ok(_) = reader.read_until(b'\n', &mut buf) {
-        if buf.is_empty() {
-            break;
-        }
-        &buf.pop();
-        if buf.last().unwrap().to_owned() == b'\r' {
-            &buf.pop();
-        }
-        let line = String::from_utf8_lossy(&buf);
-        output.push(line.into_owned());
-        buf.clear();
-    }
-    return output;
-}
 
-pub fn read_to_string(filename: &str, zipped: bool) -> String {
-    let mut input: Input = match filename {
-        "-" => Input::Stdin(io::stdin()),
-        _ => Input::File(fs::File::open(Path::new(filename)).expect("No such file"))
-    };
-    let mut buf: Vec<u8> = Vec::new();
-    if zipped {
-        match zip_handler(input) {
-            Ok(content) => {
-                let buf = String::from_utf8_lossy(&content);
-                return buf.into_owned();
-            },
-            Err(_) => return "{Error zip contains more than one file}".to_string()
-        }
-    } else {
-        input.read_to_end(&mut buf).expect("Cannot read file");
-        let buf = String::from_utf8_lossy(&buf);
-        return buf.into_owned();
-    }
+    return file;
 }
 
 pub fn write_to_file(content: &str, filename: &str) {
@@ -179,25 +216,35 @@ pub fn write_bytes_to_file(content: Vec<u8>, filename: &str) {
     }
 }
 
-pub fn prepare_file_for_SDF(file: &str, zipped: bool) -> Vec<Vec<String>>{
-    // Read file contents to string
-    let contents = read_to_string(file, zipped);
-    let mut contents_vec: Vec<&str> = contents.split("\n$$$$").collect();
-    contents_vec.pop();
-    
-    // Iterate over SD Records (as strings)
-    let mut output: Vec<Vec<String>> = Vec::new();
-    let mut i = 0;
-    for block in contents_vec {
-        // Turn strings into a vector of lines
-        let mut lines: Vec<String> = (block.to_string() + "\n$$$$").split('\n').map(|a|a.replace("\r","").to_string()).collect();
-        if i == 0 {
-            i = i + 1;
-        } else {
-            lines.remove(0);
+pub fn file_to_SDF_vec(file: &str) -> Vec<sdfrecord::SDFRecord> {
+    let mut output: Vec<sdfrecord::SDFRecord> = Vec::new();
+    let input: Input = match file {
+        "-" => Input::Stdin(std::io::stdin()),
+        filename => Input::File(fs_err::File::open(std::path::Path::new(filename)).expect("No such file"))
+    };
+    let inputfilename = input.filename();
+
+    let mut reader = BufReader::new(input);
+    let mut i = 1;
+
+    loop {
+        let block = match record_to_lines(&mut reader) {
+            Some(block) => block,
+            None => break
+        };
+
+        let mut record: sdfrecord::SDFRecord = sdfrecord::SDFRecord::new();
+        record.readRec(block);
+        if record.getData("_NATOMS") == "ERR" {
+            eprintln!("Invalid count line in {}[{}]", inputfilename, i.to_string());
+            continue;
         }
-        output.push(lines);
+
+        output.push(record);
+
+        i = i + 1;
     }
+
     return output;
 }
 
@@ -221,20 +268,11 @@ pub mod sdfrecord {
                       while value stores the line number, where it's located
 */
 
+    #[derive(Clone)]
     pub struct SDFRecord {
         pub lines: Vec<String>,
         pub data: BTreeMap<String, Vec<String>>, // Should maybe be replaced by HashMap
         pub dataref: BTreeMap<String, usize>, // Should maye be replaced by HashMap
-    }
-
-    impl Clone for SDFRecord {
-        fn clone(&self) -> SDFRecord {
-            let mut clone = SDFRecord::new();
-            clone.lines = self.lines.clone();
-            clone.data = self.data.clone();
-            clone.dataref = self.dataref.clone();
-            return clone;
-        }
     }
 
     impl SDFRecord {
@@ -256,7 +294,7 @@ pub mod sdfrecord {
          Return:
             Vec<String> containing all lines after record separator
         */
-        pub fn readRec(&mut self, file: Vec<String>) -> Vec<String> {
+        pub fn readRec(&mut self, file: Vec<String>) {
             // Clear old values
             self.lines.clear();
             self.data.clear();
@@ -286,9 +324,11 @@ pub mod sdfrecord {
                             self.data.insert("_NDIM".to_string(),vec!(ndim));
                         }
                     } else if lineNum == 4 { // Include number of atoms as pseudo data field
-                        let temp: Vec<&str> = line.split(" ").collect();
-                        if temp.len() > 0 {
-                            self.data.insert("_NATOMS".to_string(), vec!(temp[1].to_owned()));
+                        let temp: Vec<char> = line.chars().collect();
+                        if temp.len() == 39 && (temp[34..] == ['V','2','0','0','0'] || temp[34..] == ['V','3','0','0','0']) {
+                            self.data.insert("_NATOMS".to_string(), vec!(temp[..2].iter().collect::<String>().trim().to_string()));
+                        } else {
+                            self.data.insert("_NATOMS".to_string(), vec!("ERR".to_string()));
                         }
                     }
 
@@ -308,23 +348,6 @@ pub mod sdfrecord {
                     }
                 }
             }
-
-            /*
-            println!("\nLine Vector");
-            for line in &self.lines {
-                println!("{}", line);
-            }
-            println!("\nData HashMap");
-            for (key, val) in &self.data {
-                println!("({},{:?})",key,val);
-            }
-            println!("\nDataref HashMap");
-            for (key,val) in &self.dataref {
-                println!("({},{})",key,val);
-            }
-            */
-
-            return vector;
         }
 
         /*
@@ -366,14 +389,6 @@ pub mod sdfrecord {
          copy() - create deep copy of SDRecord
         */
         pub fn copy(&self) -> SDFRecord {
-            let mut clone = SDFRecord::new();
-            clone.lines = self.lines.clone();
-            clone.data = self.data.clone();
-            clone.dataref = self.dataref.clone();
-            return clone;
-        }
-        
-        pub fn clone(&self) -> SDFRecord {
             let mut clone = SDFRecord::new();
             clone.lines = self.lines.clone();
             clone.data = self.data.clone();

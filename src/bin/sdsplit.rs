@@ -1,5 +1,8 @@
 extern crate clap;
 use clap::{load_yaml, App};
+use std::{
+    io::{self, prelude::*, BufReader, BufWriter},
+};
 
 fn main(){
     // Collect help information and arguments
@@ -18,18 +21,22 @@ fn main(){
     }
 }
 
-fn split_package_num(package: &str, threads: usize, outputdir: &str, filename: &str, zipped: bool) {
-    let separator = "\n$$$$";
+fn split_package_num(package: &str, threads: usize, outputdir: &str, prefix: &str, _zipped: bool) {
 
-    // Save file contents to string
-    let contents = sdf::read_to_string(package, zipped);
-    // Split file into vector of SDRecords (as strings)
-    let mut content_iterator: Vec<&str> = contents.split("\n$$$$").collect();
-    content_iterator.pop(); // Remove last (empty) vector item
+    // Reading from stdin is not supported here
+    // ... for now
+    if package == "-" {
+        println!("Splitting stdin is only supported by size of files, not number of files!");
+        std::process::exit(0x0100);
+    }
+
+    // Get number of records in file
+    let mut reader = BufReader::new(std::fs::File::open(package).unwrap());
+    let num_rec = sdf::count_records(&mut reader);
 
     // Calculate number of SDRecords per file
-    let div: usize = content_iterator.len() / threads;
-    let rem: usize = content_iterator.len() % threads;
+    let div: usize = num_rec / threads;
+    let rem: usize = num_rec % threads;
 
     // Store number of SDRecords in vector of ints
     let mut temp: Vec<usize> = Vec::new();
@@ -44,53 +51,104 @@ fn split_package_num(package: &str, threads: usize, outputdir: &str, filename: &
     }
 
     // Iterate over vector of SDRecords per file
-    let mut current = 0;
-    for itm in &temp {
-        let mut content: String = String::new();
+    let mut reader = BufReader::new(std::fs::File::open(package).unwrap());
+    let mut buf: Vec<u8> = Vec::new();
+    let mut current = 1;
+    for size in &temp {
+        // Create output file
+        let filename = outputdir.to_owned() + "/" + &prefix + "_" + &(current).to_string() + ".sdf";
+        let file = sdf::create_file(&filename);
+
+        // Create a writer to speed up the output
+        let mut writer = BufWriter::new(file);
+
         let mut n = 0;
         // Store SDRecords in vectors of size itm
-        while &n < itm {
-            content = content.to_owned() + &(content_iterator[current as usize].to_owned() + separator);
+        while &n < size {
+            // Iterate over lines in record
+            'sub: loop {
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(_) => {
+                        // Read line from buffer
+                        &buf.pop();
+                        if buf.last().unwrap() == &b'\r' {
+                            &buf.pop();
+                        }
+                        let line = String::from_utf8_lossy(&buf);
+                        
+                        // Add line to writer
+                        writeln!(writer, "{}", line).expect("Failed to write to buffer!");
+                        
+                        // Flush writer to file
+                        if line.contains("$$$$") { 
+                            buf.clear();
+                            writer.flush().unwrap();
+                            break 'sub;
+                        }
+
+                        // Empty buffer
+                        buf.clear();
+                    }
+                    Err(e) => eprintln!("{}", e)
+                };
+            }
             n = n + 1;
         }
-        // When vector size is reached, write it to a new file
-        sdf::write_to_file(content.trim(), &(outputdir.to_owned() + "/"+ &filename + &(current+1).to_string() + ".sdf"));
         current = current + 1;
     }
 }
 
-fn split_package_size(package: &str, size: usize, outputdir: &str, filename: &str, zipped: bool) {
-    let separator = "\n$$$$";
+fn split_package_size(package: &str, size: usize, outputdir: &str, prefix: &str, _zipped: bool) {
 
-    // Save file contents to string
-    let contents = sdf::read_to_string(package, zipped);
-    // Split file into vector of SDRecords (as strings)
-    let mut content_iterator: Vec<&str> = contents.split("\n$$$$").collect();
-    content_iterator.pop(); // Remove last (empty) vector item
-    
-    // Iterate over vector of SDRecords
-    let mut files: Vec<String> = Vec::new();
-    let mut n = 0;
-    let mut content: String = String::new();
-    for block in content_iterator {
-        if n < size {
-            // Append SDRecord (as string) to string of SDRecords if number of records is <= specified size
-            content = content.to_owned() + &(block.to_owned() + separator);
-            n = n + 1;
-        } else {
-            // Push string to vector of contents when size exceeds specified size
-            files.push(content.clone());
-            content = block.to_owned() + separator;
-            n = 1;
+    let mut reader: Box<dyn BufRead> = match package {
+        "-" => Box::new(BufReader::new(io::stdin())),
+        _ => Box::new(BufReader::new(std::fs::File::open(package).unwrap()))
+    };
+    let mut buf: Vec<u8> = Vec::new();
+
+    let mut current = 1;
+    'main: loop {
+        // Create output file
+        let filename = outputdir.to_owned() + "/" + &prefix + "_" + &(current).to_string() + ".sdf";
+        let file = sdf::create_file(&filename);
+
+        // Create a writer to speed up the output
+        let mut writer = BufWriter::new(file);
+        
+        // Iterate over records in file
+        // Loop breaks after the specified number of records has been read
+        for _i in 0..size {
+            // Iterate over lines in record
+            'sub: loop {
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(_) => {
+                        // Read line from buffer
+                        if buf.is_empty() {
+                            break 'main;
+                        }
+                        &buf.pop();
+                        if buf.last().unwrap() == &b'\r' {
+                            &buf.pop();
+                        }
+                        let line = String::from_utf8_lossy(&buf);
+                        
+                        // Add line to writer
+                        writeln!(writer, "{}", line).expect("Failed to write to buffer!");
+                        
+                        // Flush writer to file
+                        if line.contains("$$$$") { 
+                            buf.clear();
+                            writer.flush().unwrap();
+                            break 'sub;
+                        }
+
+                        // Empty buffer
+                        buf.clear();
+                    }
+                    Err(e) => eprintln!("{}", e)
+                };
+            }
         }
-    }
-    // Append overflow SDRecords to vector of contents
-    files.push(content.clone());
-
-    // Write each element in vector of contents to new file
-    let mut current = 0;
-    for file in files {
-        sdf::write_to_file(file.trim(), &(outputdir.to_owned() + "/"+ &filename + &(current+1).to_string() + ".sdf"));
         current = current + 1;
     }
 }

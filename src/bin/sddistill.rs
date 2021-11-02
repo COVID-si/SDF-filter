@@ -1,21 +1,20 @@
 #![allow(non_snake_case)]
 
 use std::{
-    io,
     fs::metadata,
-    process,
+    io::BufReader,
     time::Instant
 };
 use clap::{load_yaml, App};
 use indicatif::{HumanDuration, ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 
-fn main() -> io::Result<()>{
+fn main() {
     // Collect help information and arguments
     let yaml = load_yaml!("help/sddistill.yml");
     let matches = App::from_yaml(yaml).get_matches();
     let filetypes: Vec<&str> = vec!["test"]; //matches.values_of("filetypes").unwrap().collect();
-    let zipped = matches.is_present("zipped");
+    let _zipped = matches.is_present("zipped");
 
     // Iterate over input files 
     let files: Vec<String>;
@@ -39,17 +38,16 @@ fn main() -> io::Result<()>{
         println!("Processing files...");
         let _iter: Vec<_> = files.par_iter().progress_with(pb).map(|file| { // Use par_iter() for easy parallelization
             // Read file contents to string
-            let contents = sdf::read_to_string(&file, zipped);
-
-            // Split contents to vector of SDRecords (as strings)
-            let mut contentVec: Vec<&str> = contents.split("$$$$").collect();
-            contentVec.pop(); // Remove last (empty) item
-            
-            // Iterate over SDRecords
+            let mut reader = BufReader::new(std::fs::File::open(&file).unwrap());
             let mut output: Vec<String> = Vec::new();
-            for block in contentVec {
+            loop {
+                let block = match sdf::record_to_string(&mut reader) {
+                    Some(block) => block,
+                    None => break
+                };
+
                 // Get specified field from record and store value in vector
-                output.push(extractData(block, matches.value_of("pattern").unwrap()).to_string());
+                output.push(extractData(&block, matches.value_of("pattern").unwrap()).to_string());
             }
             // Set output path
             let out_path: String = match file.trim() {
@@ -63,10 +61,9 @@ fn main() -> io::Result<()>{
 
         // Print time elapsed
         println!("Done in {}", HumanDuration(started.elapsed()));
-        Ok(())
     } else {
         // Exit if input doesn't exist
-        process::exit(0x0100);
+        std::process::exit(0x0100);
     }
 
 }

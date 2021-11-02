@@ -29,9 +29,3 @@ args:
         default_value: _TITLE1
         takes_value: true
         display_order: 3
-    - zipped:
-        short: z
-        long: zip
-        help: Input file is a zip container (currently only supports zips with a single file)
-        takes_value: false
-    
