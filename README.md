@@ -1,6 +1,7 @@
 # SDF Tools
 
 A collection of CLI tools for editing and filtering docking results made by CmDock or similar software.
+The SDF Tools Suite now supports unlimited file sizes. Support for CmZIP archives is planned, but has yet to be implemented.
 
 ## Build
 
