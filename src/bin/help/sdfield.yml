@@ -1,0 +1,38 @@
+name: sdfield
+version: "0.1.0"
+author: Gašper Tomšič <gasper.tomsic@covid.si>
+about: Add custom fields to SD files.
+args:
+    - input:
+        short: i
+        long: input
+        value_name: INPUT
+        help: Sets input file(s). - reads from stdin.
+        required: true
+        takes_value: true
+        display_order: 1
+    - output:
+        short: o
+        long: output
+        value_name: OUTPUT
+        help: Sets output directory. - writes to stdout.
+        required: false
+        default_value: "."
+        takes_value: true
+        display_order: 2
+    - field:
+        short: f
+        long: field
+        value_name: FIELD
+        help: "Sets new field title."
+        required: true
+        takes_value: true
+        display_order: 3
+    - field:
+        short: v
+        long: value
+        value_name: VALUE
+        help: "Sets new field value."
+        required: false
+        takes_value: true
+        display_order: 4
