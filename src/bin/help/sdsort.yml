@@ -11,6 +11,11 @@ args:
         required: true
         takes_value: true
         display_order: 1
+    - large-files:
+        short: L
+        long: large-files
+        help: Enable large file support. This flag is incompatible with reading from stdin.
+        required: false
     - output:
         short: o
         long: output
